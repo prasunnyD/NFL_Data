@@ -1,0 +1,17 @@
+[project]
+name = "nfl-data"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "prasunnyD",email = "prasun.sharma730@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "polars (>=1.31.0,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
