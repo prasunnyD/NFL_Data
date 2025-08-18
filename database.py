@@ -43,3 +43,7 @@ def write_to_db(df: pl.DataFrame, table_name: str):
             """)
         conn.commit()
         logging.info(f"Successfully populated {table_name}...")
+
+def get_from_db(query: str) -> pl.DataFrame:
+    with duckdb.connect(f'md:nfl_data?motherduck_token={MOTHERDUCK_TOKEN}') as conn:
+        return conn.execute(query).pl()
