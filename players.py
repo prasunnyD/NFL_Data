@@ -243,19 +243,21 @@ def get_player_gamelog(player_id : str) -> pl.DataFrame:
         dict_list = [
             {
                 **dict(zip(stat_names, boxscore['stats'])),
-                "gameId": boxscore['eventId']
+                "game_id": boxscore['eventId']
             }
             for boxscore in events
         ]
         
         boxscore_df = pl.DataFrame(dict_list)
-        boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("playerId"))
+        boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("player_id"))
         return boxscore_df
         
     except (KeyError, IndexError) as e:
-        print(f"Error parsing response data: {e}")
+        # print(f"Error parsing response data: {e}")
+        pass
     except requests.RequestException as e:
-        print(f"Error fetching data: {e}")
+        # print(f"Error fetching data: {e}")
+        pass
 
 async def get_player_gamelog_async(player_id: str, player_name: str) -> pl.DataFrame:
     """
@@ -283,21 +285,21 @@ async def get_player_gamelog_async(player_id: str, player_name: str) -> pl.DataF
             dict_list = [
                 {
                     **dict(zip(stat_names, boxscore['stats'])),
-                    "gameId": boxscore['eventId']
+                    "game_id": boxscore['eventId']
                 }
                 for boxscore in events
             ]
             
             boxscore_df = pl.DataFrame(dict_list)
-            boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("playerId"))
-            boxscore_df = boxscore_df.with_columns(pl.lit(player_name).alias("playerName"))
+            boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("player_id"))
+            boxscore_df = boxscore_df.with_columns(pl.lit(player_name).alias("player_name"))
             return boxscore_df
             
         except (KeyError, IndexError) as e:
-            logging.error(f"Error parsing response data for player {player_id}: {e}")
+            # logging.error(f"Error parsing response data for player {player_id}: {e}")
             return pl.DataFrame()
         except aiohttp.ClientError as e:
-            logging.error(f"Error fetching data for player {player_id}: {e}")
+            # logging.error(f"Error fetching data for player {player_id}: {e}")
             return pl.DataFrame()
 
 
@@ -331,18 +333,35 @@ async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], 
     
     # Combine results, filtering out errors
     valid_dataframes = []
+    players = []
+    columns = []
+    count_19 = 0
+    count_20 = 0
+    count_18 = 0
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            logging.error(f"Error fetching gamelog for player {player_ids[i]}: {result}")
+            # logging.error(f"Error fetching gamelog for player {player_ids[i]}: {result}")
+            pass
         elif not result.is_empty():
             if result.width == 19:
-                print(result)
+                count_19 += 1
+            elif result.width == 20:
+                players.append(player_ids[i])
+                columns.append(result.columns)
+                count_20 += 1
             else:
+                count_18 += 1
                 valid_dataframes.append(result)
     
     # Concatenate all valid results
     if valid_dataframes:
-        return pl.concat(valid_dataframes)
+        try:
+            return pl.concat(valid_dataframes)
+        except pl.exceptions.ShapeError as e:
+            print(f"Count 19: {count_19}")
+            print(f"Count 20: {count_20}, {players}, {columns}")
+            print(f"Count 18: {count_18}")
+            logging.error(f"Error concatenating dataframes: {e}")
     else:
         return pl.DataFrame()
 
@@ -361,10 +380,12 @@ if __name__ == "__main__":
     
     
     async def main():
-        player_df = get_from_db("select DISTINCT player_id from nfl_roster_db where position = 'TE'")
+        player_df = get_from_db("select DISTINCT player_id, player_name from nfl_roster_db where position = 'TE'")
         player_ids = player_df['player_id'].to_list()
-        gamelog_df = await get_multiple_player_gamelogs_async(player_ids)
-        print(gamelog_df.head(10))
+        player_names = player_df['player_name'].to_list()
+        player_tuples = list(zip(player_ids, player_names))
+        gamelog_df = await get_multiple_player_gamelogs_async(player_tuples)
+        print(gamelog_df.columns)
     
     # Run the async demo
     asyncio.run(main())

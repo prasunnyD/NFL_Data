@@ -88,9 +88,9 @@ def get_game_events(season_year: str) -> pl.DataFrame:
         event_dates.append(event['date'])
         event_weeks.append(event['week']['number'])
     event_df = pl.DataFrame({
-        'event_id': event_ids,
-        'event_date': event_dates,
-        'event_week': event_weeks
+        'game_id': event_ids,
+        'game_date': event_dates,
+        'game_week': event_weeks
     })
     return event_df
 

@@ -21,6 +21,10 @@ def process_position_gamelog(position: str, player_ids: list, table_name: str):
     """Process gamelog for a specific position"""
     if player_ids:
         gamelog_df = players.get_multiple_player_gamelogs_sync(player_ids)
+        if gamelog_df is None or gamelog_df.is_empty():
+            return f"No {position} players to process"
+        if gamelog_df.shape[0] == 0:
+            return f"No {position} players to process"
         database.write_to_db(gamelog_df, table_name)
         return f"Processed {len(player_ids)} {position} players"
     return f"No {position} players to process"
@@ -31,10 +35,10 @@ def populate_player_gamelog():
     
     # Group players by position
     position_groups = {
-        'QB': 'nfl_qb_gamelog_db',
-        'RB': 'nfl_rb_gamelog_db', 
-        'WR': 'nfl_wr_gamelog_db',
-        'TE': 'nfl_te_gamelog_db'
+        'QB': 'nfl_qb_gamelog',
+        'RB': 'nfl_rb_gamelog', 
+        'WR': 'nfl_wr_gamelog',
+        'TE': 'nfl_te_gamelog'
     }
     
     # Create tasks for each position that can run in parallel
@@ -54,13 +58,13 @@ def populate_roster():
     team_dict = teams.get_teams()
     for team in team_dict:
         roster = teams.get_roster(team)
-        database.write_to_db(roster, "nfl_roster_db")
+        database.write_to_db(roster, "nfl_roster")
 
 @task
 def populate_game_events():
     for year in range(2021, 2025):
         event_df = teams.get_game_events(year)
-        database.write_to_db(event_df, "nfl_game_events_db")
+        database.write_to_game_db(event_df, "nfl_games")
 
 @task
 def populate_team_stats():
