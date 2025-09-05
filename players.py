@@ -124,7 +124,7 @@ def get_player_stats(player_info : dict, year : int) -> tuple[pl.DataFrame, pl.D
     return rushing_df, receiving_df
 
 
-async def get_player_stats_async(player_info : dict, year : int, max_concurrent : int = 50) -> tuple[pl.DataFrame, pl.DataFrame]:
+async def get_player_stats_async(player_info : dict, year : int, max_concurrent : int = 50, season : int = 2024) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Async version of get_player_stats using aiohttp for non-blocking I/O.
     Most efficient for I/O-bound operations like API calls.
@@ -184,14 +184,14 @@ async def get_player_stats_async(player_info : dict, year : int, max_concurrent 
     # Create semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(max_concurrent)
     
-    async def fetch_with_semaphore(session: aiohttp.ClientSession, player_id: str, player_data: dict):
+    async def fetch_with_semaphore(session: aiohttp.ClientSession, player_id: str, player_data: dict, season: int):
         async with semaphore:
-            return await fetch_player_stats(session, player_id, player_data)
+            return await fetch_player_stats(session, player_id, player_data, season)
     
     # Process all players asynchronously
     async with aiohttp.ClientSession() as session:
         tasks = [
-            fetch_with_semaphore(session, player_id, player_data)
+            fetch_with_semaphore(session, player_id, player_data, season)
             for player_id, player_data in player_info.items()
         ]
         
@@ -214,43 +214,41 @@ async def get_player_stats_async(player_info : dict, year : int, max_concurrent 
     return rushing_df, receiving_df
 
 
-def get_player_stats_async_sync(player_info : dict, year : int, max_concurrent : int = 50) -> tuple[pl.DataFrame, pl.DataFrame]:
+def get_player_stats_async_sync(player_info : dict, year : int, max_concurrent : int = 50, season : int = 2024) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Synchronous wrapper for the async version.
     Use this if you want async performance but need a sync interface.
     """
-    return asyncio.run(get_player_stats_async(player_info, year, max_concurrent))
+    return asyncio.run(get_player_stats_async(player_info, year, max_concurrent, season))
 
 
-def get_player_gamelog(player_id : str) -> pl.DataFrame:
+def get_player_gamelog(player_id : str, season : int) -> pl.DataFrame:
     # Fetch player gamelog data
-    response = requests.get(f"https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{player_id}/gamelog")
+    response = requests.get(f"https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{player_id}/gamelog?season={season}")
     
     try:
         data = response.json()
         stat_names = data['names']
         
         # Navigate to events more safely
-        events = (data.get('seasonTypes', [{}])[0]
-                 .get('categories', [{}])[0]
-                 .get('events', []))
+        seasonTypes = data.get('seasonTypes',[{}])
+        for seasonType in seasonTypes:
+            if seasonType.get('displayName') == f'{season} Regular Season':
+                events = (seasonType.get('categories', [{}])[0]
+                        .get('events', []))
         
-        if not events:
-            print("No events found")
-            exit()
-        
-        # Use list comprehension - efficient and readable for this use case
-        dict_list = [
-            {
-                **dict(zip(stat_names, boxscore['stats'])),
-                "game_id": boxscore['eventId']
-            }
-            for boxscore in events
-        ]
-        
-        boxscore_df = pl.DataFrame(dict_list)
-        boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("player_id"))
-        return boxscore_df
+                # Use list comprehension - efficient and readable for this use case
+                dict_list = [
+                    {
+                        **dict(zip(stat_names, boxscore['stats'])),
+                        "game_id": boxscore['eventId']
+                    }
+                    for boxscore in events
+                ]
+                
+                boxscore_df = pl.DataFrame(dict_list)
+                boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("player_id"))
+                return boxscore_df
         
     except (KeyError, IndexError) as e:
         # print(f"Error parsing response data: {e}")
@@ -259,12 +257,12 @@ def get_player_gamelog(player_id : str) -> pl.DataFrame:
         # print(f"Error fetching data: {e}")
         pass
 
-async def get_player_gamelog_async(player_id: str, player_name: str) -> pl.DataFrame:
+async def get_player_gamelog_async(player_id: str, player_name: str, season: int) -> pl.DataFrame:
     """
     Async version of get_player_gamelog using aiohttp.
     """
     async with aiohttp.ClientSession() as session:
-        url = f"https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{player_id}/gamelog"
+        url = f"https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{player_id}/gamelog?season={season}"
         
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
@@ -274,26 +272,28 @@ async def get_player_gamelog_async(player_id: str, player_name: str) -> pl.DataF
             stat_names = data['names']
             
             # Navigate to events more safely
-            events = (data.get('seasonTypes', [{}])[0]
-                     .get('categories', [{}])[0]
-                     .get('events', []))
+            seasonTypes = data.get('seasonTypes',[{}])
+            for seasonType in seasonTypes:
+                if seasonType.get('displayName') == f'{season} Regular Season':
+                    events = (seasonType.get('categories', [{}])[0]
+                            .get('events', []))
             
-            if not events:
-                return pl.DataFrame()
-            
-            # Use list comprehension - efficient and readable for this use case
-            dict_list = [
-                {
-                    **dict(zip(stat_names, boxscore['stats'])),
-                    "game_id": boxscore['eventId']
-                }
-                for boxscore in events
-            ]
-            
-            boxscore_df = pl.DataFrame(dict_list)
-            boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("player_id"))
-            boxscore_df = boxscore_df.with_columns(pl.lit(player_name).alias("player_name"))
-            return boxscore_df
+                    # Use list comprehension - efficient and readable for this use case
+                    dict_list = [
+                        {
+                            **dict(zip(stat_names, boxscore['stats'])),
+                            "game_id": boxscore['eventId']
+                        }
+                        for boxscore in events
+                    ]
+                    
+                    boxscore_df = pl.DataFrame(dict_list)
+                    boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("player_id"))
+                    boxscore_df = boxscore_df.with_columns(pl.lit(player_name).alias("player_name"))
+                    return boxscore_df
+
+            logging.debug(f"No {season} Regular Season found")
+            return pl.DataFrame()
             
         except (KeyError, IndexError) as e:
             # logging.error(f"Error parsing response data for player {player_id}: {e}")
@@ -303,7 +303,7 @@ async def get_player_gamelog_async(player_id: str, player_name: str) -> pl.DataF
             return pl.DataFrame()
 
 
-async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], max_concurrent: int = 50) -> pl.DataFrame:
+async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], max_concurrent: int = 50, season: int = 2024) -> pl.DataFrame:
     """
     Fetch gamelog data for multiple players concurrently using async.
     Much more efficient than fetching one by one.
@@ -321,12 +321,12 @@ async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], 
     # Create semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(max_concurrent)
     
-    async def fetch_with_semaphore(player_id: str, player_name: str) -> pl.DataFrame:
+    async def fetch_with_semaphore(player_id: str, player_name: str, season: int) -> pl.DataFrame:
         async with semaphore:
-            return await get_player_gamelog_async(player_id, player_name)
+            return await get_player_gamelog_async(player_id, player_name, season)
     
     # Create tasks for all players
-    tasks = [fetch_with_semaphore(player_id, player_name) for player_id, player_name in player_ids]
+    tasks = [fetch_with_semaphore(player_id, player_name, season) for player_id, player_name in player_ids]
     
     # Execute all tasks concurrently
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -342,7 +342,7 @@ async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], 
         if isinstance(result, Exception):
             # logging.error(f"Error fetching gamelog for player {player_ids[i]}: {result}")
             pass
-        elif not result.is_empty():
+        elif not result.is_empty() or None:
             if result.width == 19:
                 count_19 += 1
             elif result.width == 20:
@@ -366,28 +366,20 @@ async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], 
         return pl.DataFrame()
 
 
-def get_multiple_player_gamelogs_sync(player_ids: list[tuple[str, str]], max_concurrent: int = 50) -> pl.DataFrame:
+def get_multiple_player_gamelogs_sync(player_ids: list[tuple[str, str]], max_concurrent: int = 50, season: int = 2024) -> pl.DataFrame:
     """
     Synchronous wrapper for the async version.
     Use this if you want async performance but need a sync interface.
     """
-    return asyncio.run(get_multiple_player_gamelogs_async(player_ids, max_concurrent))
+    return asyncio.run(get_multiple_player_gamelogs_async(player_ids, max_concurrent, season))
 
 
 if __name__ == "__main__":
-
-    # Example: Fetch gamelog for multiple players efficiently
+    import asyncio
     
+    async def test_gamelog():
+        df = await get_player_gamelog_async(player_id='4047365', player_name='Josh Jacobs', season=2024)
+        return df
     
-    async def main():
-        player_df = get_from_db("select DISTINCT player_id, player_name from nfl_roster_db where position = 'TE'")
-        player_ids = player_df['player_id'].to_list()
-        player_names = player_df['player_name'].to_list()
-        player_tuples = list(zip(player_ids, player_names))
-        gamelog_df = await get_multiple_player_gamelogs_async(player_tuples)
-        print(gamelog_df.columns)
-    
-    # Run the async demo
-    asyncio.run(main())
-
-
+    # Run the async function
+    df = asyncio.run(test_gamelog())

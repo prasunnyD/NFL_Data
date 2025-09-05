@@ -17,16 +17,15 @@ def populate_player_overall_stats():
         database.write_to_db(receiving_df, "nfl_receiving_db")
 
 @task
-def process_position_gamelog(position: str, player_ids: list, table_name: str):
+def process_position_gamelog(position: str, player_ids: list, table_name: str, final_df: pl.DataFrame, season: int):
     """Process gamelog for a specific position"""
     if player_ids:
-        gamelog_df = players.get_multiple_player_gamelogs_sync(player_ids)
+        gamelog_df = players.get_multiple_player_gamelogs_sync(player_ids, season=season)
         if gamelog_df is None or gamelog_df.is_empty():
             return f"No {position} players to process"
         if gamelog_df.shape[0] == 0:
             return f"No {position} players to process"
-        database.write_to_db(gamelog_df, table_name)
-        return f"Processed {len(player_ids)} {position} players"
+        return gamelog_df
     return f"No {position} players to process"
 
 @task
@@ -34,24 +33,28 @@ def populate_player_gamelog():
     player_df = database.get_from_db("select DISTINCT player_id, player_name, position from nfl_roster_db")
     
     # Group players by position
-    position_groups = {
-        'QB': 'nfl_qb_gamelog',
-        'RB': 'nfl_rb_gamelog', 
-        'WR': 'nfl_wr_gamelog',
-        'TE': 'nfl_te_gamelog'
-    }
+    position_groups = ['QB', 'RB', 'WR', 'TE']
+    season = 2024
     
     # Create tasks for each position that can run in parallel
     tasks = []
-    for position, table_name in position_groups.items():
+    for position in position_groups:
         position_df = player_df.filter(pl.col("position") == position)
         player_tuples = list(position_df.select("player_id", "player_name").iter_rows())
-        task = process_position_gamelog.submit(position, player_tuples, table_name)
+        task = process_position_gamelog.submit(position, player_tuples, "", pl.DataFrame(), season)
         tasks.append(task)
     
-    # Wait for all tasks to complete
-    results = [task.result() for task in tasks]
-    return results
+    # Collect only the DataFrames, filter out strings
+    gamelogs_df = []
+    for task in tasks:
+        result = task.result()
+        if isinstance(result, pl.DataFrame):  # Only add DataFrames
+            gamelogs_df.append(result)
+    
+    # Only concatenate if we have DataFrames
+    if gamelogs_df:
+        final_df = pl.concat(gamelogs_df, how="diagonal")
+        database.write_to_db(final_df, "nfl_player_gamelog")
 
 @task
 def populate_roster():
@@ -108,7 +111,7 @@ def populate_team_stats():
 
 @flow
 def main():
-    populate_game_events()
+    populate_player_gamelog()
 
 
 if __name__ == "__main__":
