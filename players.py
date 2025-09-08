@@ -56,143 +56,73 @@ def get_stats(stats : dict, player_id : str, player_name : str, player_position 
         logging.error(e)
         logging.error(df.columns)
 
-def get_player_stats(player_info : dict, year : int) -> tuple[pl.DataFrame, pl.DataFrame]:
+
+async def get_player_stats_async(player_df: pl.DataFrame, year: int, max_concurrent: int = 50) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """
-    Fetches and aggregates rushing and receiving statistics for a list of NFL players for a given season.
-
-    Args:
-        player_info (dict): A dictionary mapping player IDs to their information, including 'name' and 'position'.
-        year (int): The NFL season year for which to fetch player statistics.
-
-    Returns:
-        tuple[pl.DataFrame, pl.DataFrame]: 
-            - The first DataFrame contains rushing statistics for the specified players.
-            - The second DataFrame contains receiving statistics for the specified players.
+    Async version using DataFrame directly - most efficient approach.
     """
     rushing_data = []
     receiving_data = []
+    passing_data = []
     
     # Define position groups for efficiency
     rushing_positions = {'RB', 'QB', 'WR', 'TE'}
     receiving_positions = {'WR', 'TE', 'RB'}
     
-    # Use session for connection pooling
-    session = requests.Session()
-    
-    for player_id, player_data in player_info.items():
-        try:
-            # Use session for better performance
-            response = session.get(
-                f"http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/{year}/types/2/athletes/{player_id}/statistics/0?lang=en&region=us",
-                timeout=10
-            )
-            response.raise_for_status()
-            
-            player_name = player_data['name']
-            player_position = player_data['position']
-            
-            # Get categories from response with safer navigation
-            data = response.json()
-            categories = data.get('splits', {}).get('categories', [])
-            
-            for stats in categories:
-                display_name = stats.get('displayName', '')
-                
-                # Handle rushing stats
-                if (display_name == 'Rushing' and 
-                    player_position in rushing_positions):
-                    stats_df = get_stats(stats, player_id, player_name, player_position)
-                    if stats_df is not None:
-                        rushing_data.append(stats_df)
-                
-                # Handle receiving stats  
-                elif (display_name == 'Receiving' and 
-                      player_position in receiving_positions):
-                    stats_df = get_stats(stats, player_id, player_name, player_position)
-                    if stats_df is not None:
-                        receiving_data.append(stats_df)
-                        
-        except (requests.RequestException, KeyError, ValueError) as e:
-            logging.error(f"Error fetching stats for {player_data.get('name', 'Unknown')} (ID: {player_id}): {e}")
-        except Exception as e:
-            logging.error(f"Unexpected error for {player_data.get('name', 'Unknown')}: {e}")
-    
-    # Batch concatenate all data at once (much more efficient)
-    rushing_df = pl.concat(rushing_data) if rushing_data else pl.DataFrame()
-    receiving_df = pl.concat(receiving_data) if receiving_data else pl.DataFrame()
-    
-    return rushing_df, receiving_df
-
-
-async def get_player_stats_async(player_info : dict, year : int, max_concurrent : int = 50, season : int = 2024) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """
-    Async version of get_player_stats using aiohttp for non-blocking I/O.
-    Most efficient for I/O-bound operations like API calls.
-
-    Args:
-        player_info (dict): A dictionary mapping player IDs to their information.
-        year (int): The NFL season year for which to fetch player statistics.
-        max_concurrent (int): Maximum number of concurrent requests.
-
-    Returns:
-        tuple[pl.DataFrame, pl.DataFrame]: Rushing and receiving statistics DataFrames.
-    """
-    rushing_data = []
-    receiving_data = []
-    
-    # Define position groups for efficiency
-    rushing_positions = {'RB', 'QB', 'WR', 'TE'}
-    receiving_positions = {'WR', 'TE', 'RB'}
-    
-    async def fetch_player_stats(session: aiohttp.ClientSession, player_id: str, player_data: dict) -> tuple[list, list]:
+    async def fetch_player_stats(session: aiohttp.ClientSession, row: dict) -> tuple[list, list, list]:
         """Fetch stats for a single player asynchronously."""
         player_rushing = []
         player_receiving = []
+        player_passing = []
         
         try:
+            player_id = row['player_id']
+            player_name = row['player_name']
+            player_position = row['position']
+            
             url = f"http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/{year}/types/2/athletes/{player_id}/statistics/0?lang=en&region=us"
             
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 response.raise_for_status()
                 data = await response.json()
             
-            player_name = player_data['name']
-            player_position = player_data['position']
-            
             categories = data.get('splits', {}).get('categories', [])
             
             for stats in categories:
                 display_name = stats.get('displayName', '')
                 
-                if (display_name == 'Rushing' and 
-                    player_position in rushing_positions):
+                if (display_name == 'Rushing' and player_position in rushing_positions):
                     stats_df = get_stats(stats, player_id, player_name, player_position)
                     if stats_df is not None:
                         player_rushing.append(stats_df)
                 
-                elif (display_name == 'Receiving' and 
-                      player_position in receiving_positions):
+                elif (display_name == 'Receiving' and player_position in receiving_positions):
                     stats_df = get_stats(stats, player_id, player_name, player_position)
                     if stats_df is not None:
                         player_receiving.append(stats_df)
+                
+                elif (display_name == 'Passing' and player_position == 'QB'):
+                    stats_df = get_stats(stats, player_id, player_name, player_position)
+                    if stats_df is not None:
+                        player_passing.append(stats_df)
                         
         except Exception as e:
-            logging.error(f"Error fetching stats for {player_data.get('name', 'Unknown')} (ID: {player_id}): {e}")
+            logging.error(f"Error fetching stats for {row.get('player_name', 'Unknown')} (ID: {row.get('player_id', 'Unknown')}): {e}")
         
-        return player_rushing, player_receiving
+        return player_rushing, player_receiving, player_passing
     
     # Create semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(max_concurrent)
     
-    async def fetch_with_semaphore(session: aiohttp.ClientSession, player_id: str, player_data: dict, season: int):
+    async def fetch_with_semaphore(session: aiohttp.ClientSession, row: dict):
         async with semaphore:
-            return await fetch_player_stats(session, player_id, player_data, season)
+            return await fetch_player_stats(session, row)
     
-    # Process all players asynchronously
+    # Process all players asynchronously using DataFrame rows directly
     async with aiohttp.ClientSession() as session:
         tasks = [
-            fetch_with_semaphore(session, player_id, player_data, season)
-            for player_id, player_data in player_info.items()
+            fetch_with_semaphore(session, row)
+            for row in player_df.iter_rows(named=True)  # Direct DataFrame iteration
         ]
         
         # Wait for all tasks to complete
@@ -203,59 +133,26 @@ async def get_player_stats_async(player_info : dict, year : int, max_concurrent 
             if isinstance(result, Exception):
                 logging.error(f"Task failed with exception: {result}")
             else:
-                player_rushing, player_receiving = result
+                player_rushing, player_receiving, player_passing = result
                 rushing_data.extend(player_rushing)
                 receiving_data.extend(player_receiving)
+                passing_data.extend(player_passing)
     
     # Batch concatenate all data
     rushing_df = pl.concat(rushing_data) if rushing_data else pl.DataFrame()
     receiving_df = pl.concat(receiving_data) if receiving_data else pl.DataFrame()
+    passing_df = pl.concat(passing_data, how="diagonal") if passing_data else pl.DataFrame()
     
-    return rushing_df, receiving_df
+    return rushing_df, receiving_df, passing_df
 
 
-def get_player_stats_async_sync(player_info : dict, year : int, max_concurrent : int = 50, season : int = 2024) -> tuple[pl.DataFrame, pl.DataFrame]:
+def get_player_stats_async_sync(player_df: pl.DataFrame, year: int, max_concurrent: int = 50) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """
-    Synchronous wrapper for the async version.
-    Use this if you want async performance but need a sync interface.
+    Synchronous wrapper for the async version using DataFrame directly.
+    Much more efficient than dict conversion.
     """
-    return asyncio.run(get_player_stats_async(player_info, year, max_concurrent, season))
+    return asyncio.run(get_player_stats_async(player_df, year, max_concurrent))
 
-
-def get_player_gamelog(player_id : str, season : int) -> pl.DataFrame:
-    # Fetch player gamelog data
-    response = requests.get(f"https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{player_id}/gamelog?season={season}")
-    
-    try:
-        data = response.json()
-        stat_names = data['names']
-        
-        # Navigate to events more safely
-        seasonTypes = data.get('seasonTypes',[{}])
-        for seasonType in seasonTypes:
-            if seasonType.get('displayName') == f'{season} Regular Season':
-                events = (seasonType.get('categories', [{}])[0]
-                        .get('events', []))
-        
-                # Use list comprehension - efficient and readable for this use case
-                dict_list = [
-                    {
-                        **dict(zip(stat_names, boxscore['stats'])),
-                        "game_id": boxscore['eventId']
-                    }
-                    for boxscore in events
-                ]
-                
-                boxscore_df = pl.DataFrame(dict_list)
-                boxscore_df = boxscore_df.with_columns(pl.lit(player_id).alias("player_id"))
-                return boxscore_df
-        
-    except (KeyError, IndexError) as e:
-        # print(f"Error parsing response data: {e}")
-        pass
-    except requests.RequestException as e:
-        # print(f"Error fetching data: {e}")
-        pass
 
 async def get_player_gamelog_async(player_id: str, player_name: str, season: int) -> pl.DataFrame:
     """
@@ -345,6 +242,7 @@ async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], 
         elif not result.is_empty() or None:
             if result.width == 19:
                 count_19 += 1
+                valid_dataframes.append(result)
             elif result.width == 20:
                 players.append(player_ids[i])
                 columns.append(result.columns)
@@ -356,7 +254,7 @@ async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str]], 
     # Concatenate all valid results
     if valid_dataframes:
         try:
-            return pl.concat(valid_dataframes)
+            return pl.concat(valid_dataframes, how="diagonal")
         except pl.exceptions.ShapeError as e:
             print(f"Count 19: {count_19}")
             print(f"Count 20: {count_20}, {players}, {columns}")
@@ -377,9 +275,14 @@ def get_multiple_player_gamelogs_sync(player_ids: list[tuple[str, str]], max_con
 if __name__ == "__main__":
     import asyncio
     
-    async def test_gamelog():
-        df = await get_player_gamelog_async(player_id='4047365', player_name='Josh Jacobs', season=2024)
-        return df
+    # async def test_gamelog():
+    #     df = await get_multiple_player_gamelogs_async(player_ids=[('3045147', 'James Conner'), ('3917315', 'Kyler Murray')], season=2024)
+    #     return df
     
-    # Run the async function
-    df = asyncio.run(test_gamelog())
+    # # Run the async function
+    # df = asyncio.run(test_gamelog())
+    df = get_multiple_player_gamelogs_sync(player_ids=[('3045147', 'James Conner'), ('3917315', 'Kyler Murray')], season=2024)
+    print(df)
+    print(df.columns)
+    print(df.width)
+    print(df.select("player_name", "player_id"))
