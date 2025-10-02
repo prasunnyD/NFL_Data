@@ -94,13 +94,67 @@ def get_game_events(season_year: str) -> pl.DataFrame:
     })
     return event_df
 
+def add_team_defense_advanced_stats(df: pl.DataFrame) -> pl.DataFrame:
+
+        columns_to_rank = ['epa_per_play_allowed', 'success_rate_allowed', 'rush_success_rate_allowed', 'dropback_success_rate_allowed', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended']
+        team_mapping = {
+            'ARI': 'Cardinals',
+            'ATL': 'Falcons',
+            'BAL': 'Ravens',
+            'BUF': 'Bills',
+            'CAR': 'Panthers',
+            'CHI': 'Bears',
+            'CIN': 'Bengals',
+            'CLE': 'Browns',
+            'DAL': 'Cowboys',
+            'DEN': 'Broncos',
+            'DET': 'Lions',
+            'GB': 'Packers',
+            'HOU': 'Texans',
+            'IND': 'Colts',
+            'JAX': 'Jaguars',
+            'KC': 'Chiefs',
+            'LA': 'Rams',
+            'LAC': 'Chargers',
+            'LV': 'Raiders',
+            'MIA': 'Dolphins',
+            'MIN': 'Vikings',
+            'NE': 'Patriots',
+            'NO': 'Saints',
+            'NYG': 'Giants',
+            'NYJ': 'Jets',
+            'PHI': 'Eagles',
+            'PIT': 'Steelers',
+            'SEA': 'Seahawks',
+            'SF': '49ers',
+            'TB': 'Buccaneers',
+            'TEN': 'Titans',
+            'WAS': 'Commanders'
+        }
+        adv_stats = pl.read_csv("nfl_adv_stats/NFL-2025-week4-defense-stats.csv")
+        adv_stats = adv_stats.with_columns(pl.col("Abbr").map_elements(lambda x: team_mapping.get(x, x)).alias("team_name"))
+        adv_stats = adv_stats.drop(["Abbr","Team", ""])
+        adv_stats = adv_stats.rename({"EPA/play": "epa_per_play_allowed", "Success Rate (SR)": "success_rate_allowed", "Rush SR": "rush_success_rate_allowed", "Dropback SR": "dropback_success_rate_allowed"})
+        df = df.join(adv_stats, on="team_name")
+        # Create rank columns for the specified columns
+        rank_expressions = []
+        for col in columns_to_rank:
+            if col in df.columns:
+                # For defensive stats, lower is better for yardsAllowed and pointsAllowed
+                # Higher is better for sacks, stuffs, and passesDefended
+                if col in ['epa_per_play_allowed', 'success_rate_allowed', 'rush_success_rate_allowed', 'dropback_success_rate_allowed']:
+                    # Lower values get better ranks (rank 1 = best)
+                    rank_expressions.append(pl.col(col).rank(method='min', descending=False).alias(f'{col}_rank'))
+                else:
+                    # Higher values get better ranks (rank 1 = best)
+                    rank_expressions.append(pl.col(col).rank(method='min', descending=True).alias(f'{col}_rank'))
+
+        # Add all rank columns to the original DataFrame
+        df_with_ranks = df.with_columns(rank_expressions)
+        
+        return df_with_ranks
+    
+
 
 if __name__ == "__main__":
-    response = requests.get("https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?limit=1000&dates=2023&seasontype=2")
-    response_json = response.json()
-    events = response_json['events']
-    for event in events:
-        print(event['id'])
-        print(event['date'])
-        print(event['week']['number'])
-
+    
