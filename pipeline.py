@@ -36,21 +36,30 @@ def populate_player_gamelog():
     season = 2024
     
     # Process all players with built-in concurrency
-    gamelog_df = players.get_multiple_player_gamelogs_sync(all_players, season=season)
+    gamelog_df, qb_gamelog_df = players.get_multiple_player_gamelogs_sync(all_players, season=season)
     games_df = database.get_from_db("select game_id, game_date::date as game_date, game_week::int as game_week from nfl_games")
     gamelog_df = gamelog_df.join(games_df, on=["game_id"])
+    qb_gamelog_df = qb_gamelog_df.join(games_df, on=["game_id"])
 
     gamelog_df = gamelog_df.with_columns([
             pl.col("game_date").dt.year().alias("season")
         ])
-    # gamelog_df = gamelog_df.with_columns(pl.col("player_id").cast(pl.Int64))
+    gamelog_df = gamelog_df.with_columns(pl.col("player_id").cast(pl.Int64))
+    qb_gamelog_df = qb_gamelog_df.with_columns([
+            pl.col("game_date").dt.year().alias("season")
+        ])
+    qb_gamelog_df = qb_gamelog_df.with_columns(pl.col("player_id").cast(pl.Int64))
 
-    snap_counts_df = players.snap_counts_to_df(season)
-    snap_counts_df = snap_counts_df.drop("player_name")
-    gamelog_df = gamelog_df.join(snap_counts_df, on=["player_id", "season", "game_week"], how="left")
     
     if not gamelog_df.is_empty():
-        database.insert_into_db(gamelog_df, "nfl_player_gamelog")
+        database.insert_into_db(gamelog_df, "nfl_player_gamelog_test")
+    if not qb_gamelog_df.is_empty():
+        database.insert_into_db(qb_gamelog_df, "nfl_qb_gamelog")
+
+@task
+def populate_player_snap_counts():
+    snap_counts_df = players.snap_counts_to_df([2025, 2024])
+    database.write_to_db(snap_counts_df, "nfl_player_snap_counts", "player_id")
 
 @task
 def populate_roster():
@@ -104,13 +113,26 @@ def populate_team_stats():
             )
             if category == "defensive":
                 pivoted_stats = teams.add_team_defense_advanced_stats(pivoted_stats)
+            elif category in ["passing", "rushing", "receiving"]:
+                rank_expressions = []
+                for col in pivoted_stats.columns:
+                    rank_expressions.append(pl.col(col).rank(method='min', descending=True).alias(f'{col}_rank'))
+                pivoted_stats = pivoted_stats.with_columns(rank_expressions)
             
             # Write to database
             database.write_to_db(pivoted_stats, f"nfl_team_{category}_stats_db", "team_id")
 
+@task
+def populate_team_advanced_offense_stats():
+    adv_stats = teams.add_team_offense_advanced_stats()
+    team_df = database.get_from_db("select DISTINCT team_name, team_id from nfl_roster_db")
+    adv_stats = adv_stats.join(team_df, on="team_name", how="left")
+    database.write_to_db(adv_stats, "nfl_team_offense_advanced_stats", "team_id")
+
+
 @flow
 def main():
-    populate_team_stats()
+    populate_player_gamelog()
     
 
 

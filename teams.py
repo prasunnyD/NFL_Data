@@ -155,6 +155,56 @@ def add_team_defense_advanced_stats(df: pl.DataFrame) -> pl.DataFrame:
         return df_with_ranks
     
 
+def add_team_offense_advanced_stats() -> pl.DataFrame:
 
-if __name__ == "__main__":
-    
+        columns_to_rank = ['epa_per_play', 'success_rate', 'rush_success_rate', 'dropback_success_rate', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended']
+        team_mapping = {
+            'ARI': 'Cardinals',
+            'ATL': 'Falcons',
+            'BAL': 'Ravens',
+            'BUF': 'Bills',
+            'CAR': 'Panthers',
+            'CHI': 'Bears',
+            'CIN': 'Bengals',
+            'CLE': 'Browns',
+            'DAL': 'Cowboys',
+            'DEN': 'Broncos',
+            'DET': 'Lions',
+            'GB': 'Packers',
+            'HOU': 'Texans',
+            'IND': 'Colts',
+            'JAX': 'Jaguars',
+            'KC': 'Chiefs',
+            'LA': 'Rams',
+            'LAC': 'Chargers',
+            'LV': 'Raiders',
+            'MIA': 'Dolphins',
+            'MIN': 'Vikings',
+            'NE': 'Patriots',
+            'NO': 'Saints',
+            'NYG': 'Giants',
+            'NYJ': 'Jets',
+            'PHI': 'Eagles',
+            'PIT': 'Steelers',
+            'SEA': 'Seahawks',
+            'SF': '49ers',
+            'TB': 'Buccaneers',
+            'TEN': 'Titans',
+            'WAS': 'Commanders'
+        }
+        adv_stats = pl.read_csv("nfl_adv_stats/NFL-2025-week4-offense-stats.csv")
+        adv_stats = adv_stats.with_columns(pl.col("Abbr").map_elements(lambda x: team_mapping.get(x, x)).alias("team_name"))
+        adv_stats = adv_stats.drop(["Abbr","Team", ""])
+        adv_stats = adv_stats.rename({"EPA/play": "epa_per_play", "Success Rate (SR)": "success_rate", "Rush SR": "rush_success_rate", "Dropback SR": "dropback_success_rate"})
+        # Create rank columns for the specified columns
+        rank_expressions = []
+        for col in columns_to_rank:
+            if col in adv_stats.columns:
+                rank_expressions.append(pl.col(col).rank(method='min', descending=True).alias(f'{col}_rank'))
+
+        # Add all rank columns to the original DataFrame
+        adv_stats_with_ranks = adv_stats.with_columns(rank_expressions)
+        
+        return adv_stats_with_ranks
+
+

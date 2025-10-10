@@ -104,11 +104,15 @@ def insert_into_db(df: pl.DataFrame, table_name: str):
             # Register the DataFrame as a temporary table
             conn.register('temp_df', df)
             
-            # Insert only records where game_id doesn't already exist
+            # Insert only records where game_id and player_id combination doesn't already exist
             conn.execute(f"""
                 INSERT INTO {table_name} 
                 SELECT * FROM temp_df
-                WHERE game_id NOT IN (SELECT game_id FROM {table_name})
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM {table_name} 
+                    WHERE {table_name}.game_id = temp_df.game_id 
+                    AND {table_name}.player_id = temp_df.player_id
+                )
             """)
             conn.commit()
             logging.info(f"Successfully populated {table_name}...")

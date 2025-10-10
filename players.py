@@ -234,40 +234,26 @@ async def get_multiple_player_gamelogs_async(player_ids: list[tuple[str, str, st
     
     # Combine results, filtering out errors
     valid_dataframes = []
-    players = []
-    columns = []
-    count_19 = 0
-    count_20 = 0
-    count_18 = 0
+    qb_dataframes = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
             pass
         elif not result.is_empty() or None:
-            logging.info(f"Result: {result}")
-            if result.width == 19:
-                count_19 += 1
-                valid_dataframes.append(result)
-            elif result.width == 20:
-                players.append(player_ids[i])
-                columns.append(result.columns)
-                valid_dataframes.append(result)
-                count_20 += 1
+            if not result.filter(pl.col("position") == "QB").is_empty():
+                qb_dataframes.append(result)
             else:
-                count_18 += 1
                 valid_dataframes.append(result)
     
     # Concatenate all valid results
-    if valid_dataframes:
+    if valid_dataframes and qb_dataframes:
         logging.info(f"Valid dataframes: {len(valid_dataframes)}")
         try:
-            return pl.concat(valid_dataframes, how="diagonal")
+            return pl.concat(valid_dataframes, how="diagonal"), pl.concat(qb_dataframes, how="diagonal")
         except pl.exceptions.ShapeError as e:
-            print(f"Count 19: {count_19}")
-            print(f"Count 20: {count_20}, {players}, {columns}")
-            print(f"Count 18: {count_18}")
+
             logging.error(f"Error concatenating dataframes: {e}")
     else:
-        return pl.DataFrame()
+        return pl.DataFrame(), pl.DataFrame()
 
 
 def get_multiple_player_gamelogs_sync(player_ids: list[tuple[str, str, str]], max_concurrent: int = 50, season: int = 2024) -> pl.DataFrame:
@@ -277,7 +263,7 @@ def get_multiple_player_gamelogs_sync(player_ids: list[tuple[str, str, str]], ma
     """
     return asyncio.run(get_multiple_player_gamelogs_async(player_ids, max_concurrent, season))
 
-def snap_counts_to_df(season: int) -> pl.DataFrame:
+def snap_counts_to_df(season: list[int]) -> pl.DataFrame:
 
     df=nfl.import_ids()
     df = df.get(["espn_id", "merge_name"])
@@ -286,7 +272,7 @@ def snap_counts_to_df(season: int) -> pl.DataFrame:
     df = pl.from_pandas(df)
     df = df.rename({"merge_name": "player_name", "espn_id": "player_id"})
 
-    snap_counts_df = nfl.import_snap_counts([season])
+    snap_counts_df = nfl.import_snap_counts(season)
     polars_df = pl.from_pandas(snap_counts_df)
     polars_df = polars_df.select("season", "week", "team", "position", "player", "offense_snaps", "offense_pct", "defense_snaps", "defense_pct")
     snap_count_df = polars_df.rename({
@@ -309,10 +295,12 @@ if __name__ == "__main__":
 
 
     async def test_gamelog():
-        df = await get_multiple_player_gamelogs_async(player_ids=[('3916387', 'Lamar Jackson', 'QB'), ('4047650', 'DK Metcalf', 'WR')], season=2025)
+        df, df_qb = await get_multiple_player_gamelogs_async(player_ids=[('3916387', 'Lamar Jackson', 'QB'), ('4047650', 'DK Metcalf', 'WR')], season=2025)
         df = df.select("player_name", "position", "rushingYards", "rushingAttempts", "receivingYards")
-        return df
+        df_qb = df_qb.select("player_name", "position", "rushingYards", "rushingAttempts", "passingYards", "passingAttempts")
+        return df, df_qb
     
     # Run the async function
-    df = asyncio.run(test_gamelog())
+    df, df_qb = asyncio.run(test_gamelog())
+    print(df_qb)
     print(df)
