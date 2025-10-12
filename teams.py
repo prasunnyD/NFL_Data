@@ -1,6 +1,7 @@
 import requests
 import polars as pl
 import database
+from scraping import PlaywrightScraper
 
 def get_teams():
     action = requests.get("https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams")
@@ -75,6 +76,38 @@ def get_team_stats(team_id: int, season_year: int) -> pl.DataFrame:
         'stat_name': stat_names,
         'stat_value': stat_values
     })
+
+def convert_string_columns_to_float(df: pl.DataFrame, exclude_columns: list = None) -> pl.DataFrame:
+    """
+    Convert string columns to float by removing percentage signs and commas.
+    
+    Args:
+        df (pl.DataFrame): The DataFrame to convert
+        exclude_columns (list): List of column names to exclude from conversion
+        
+    Returns:
+        pl.DataFrame: DataFrame with string columns converted to float
+    """
+    if exclude_columns is None:
+        exclude_columns = []
+    
+    # Find string columns that need conversion
+    string_columns = []
+    for col in df.columns:
+        if col not in exclude_columns and not df[col].dtype.is_numeric():
+            string_columns.append(col)
+    
+    # Convert string columns to float
+    if string_columns:
+        conversion_expressions = []
+        for col in string_columns:
+            # Try to convert to float, handling percentage signs and other common string formats
+            conversion_expressions.append(
+                pl.col(col).str.replace('%', '').str.replace(',', '').cast(pl.Float64, strict=False).alias(col)
+            )
+        df = df.with_columns(conversion_expressions)
+    
+    return df
 
 def get_game_events(season_year: str) -> pl.DataFrame:
     response = requests.get(f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?limit=1000&dates={season_year}&seasontype=2")
@@ -207,4 +240,122 @@ def add_team_offense_advanced_stats() -> pl.DataFrame:
         
         return adv_stats_with_ranks
 
+def sharp_defense_stats() -> pl.DataFrame:
+    urls = [ "https://www.sharpfootballanalysis.com/stats-nfl/nfl-defensive-stats/",
+            "https://www.sharpfootballanalysis.com/stats-nfl/nfl-defensive-line-stats/",
+            "https://www.sharpfootballanalysis.com/stats-nfl/nfl-defensive-tendencies/",
+            "https://www.sharpfootballanalysis.com/stats-nfl/nfl-coverage-schemes/",
+            ]
+    
+    dataframes = []
+    
+    with PlaywrightScraper() as scraper:
+        results = scraper.scrape_multiple_urls(urls, wait_time=2)
+        for result in results:
+            if result.success:
+                df = pl.from_pandas(result.dataframe)
+                print(f"Scraped columns from {result.url}: {df.columns}")
+                dataframes.append(df)
+    
+    # Handle case where no data was successfully scraped
+    if not dataframes:
+        return pl.DataFrame()
+    
+    # Start with the first DataFrame and join subsequent ones
+    final_df = dataframes[0]
+    for df in dataframes[1:]:
+        # Use outer join to keep all teams and all columns
+        final_df = final_df.join(df, on="Team")
+    
+    # Create rank columns for numeric columns only
+    rank_expressions = []
+    for col in final_df.columns:
+        # Skip non-numeric columns and the Team column
+        if col == "Team" or not final_df[col].dtype.is_numeric():
+            continue
+            
+        # For defensive stats, lower is better for yardsAllowed and pointsAllowed
+        # Higher is better for sacks, stuffs, and passesDefended
+        if col in ['Explosive Play Rate Allowed', 'Yards Before Contact Per Rb Rush', 'Yards Per Play Allowed', 'Down Conversion Rate Allowed']:
+            # Lower values get better ranks (rank 1 = best)
+            rank_expressions.append(pl.col(col).rank(method='min', descending=False).alias(f'{col}_rank'))
+        else:
+            # Higher values get better ranks (rank 1 = best)
+            rank_expressions.append(pl.col(col).rank(method='min', descending=True).alias(f'{col}_rank'))
+
+    # Add all rank columns to the original DataFrame
+    if rank_expressions:
+        final_df = final_df.with_columns(rank_expressions)
+    
+    # Clean up column names: replace spaces with underscores and convert to lowercase
+    column_mapping = {col: col.replace(' ', '_').lower() for col in final_df.columns}
+    final_df = final_df.rename(column_mapping)
+    
+    return final_df
+
+def sumer_advanced_stats() -> pl.DataFrame:
+    urls = [ "https://sumersports.com/teams/defensive/",
+            "https://sumersports.com/teams/offensive/",]
+    dataframes = []
+    with PlaywrightScraper() as scraper:
+        results = scraper.scrape_multiple_urls(urls, wait_time=2)
+        for result in results:
+            if result.success:
+                df = pl.from_pandas(result.dataframe)
+                print(f"Scraped columns from {result.url}: {df.columns}")
+                dataframes.append(df)
+
+    
+    defense_df = dataframes[0]
+    
+    # Convert string columns to float before ranking using reusable function
+    defense_df = convert_string_columns_to_float(defense_df, exclude_columns=["Team", "Season"])
+    
+    # Create rank columns for numeric columns only
+    defense_rank_expressions = []
+    for col in defense_df.columns:
+        # Skip non-numeric columns and the Team column
+        if col in ["Team", "Season"]:
+            continue
+        # For defensive stats, lower is better for yardsAllowed and pointsAllowed
+        # Higher is better for sacks, stuffs, and passesDefended
+        if col in ['Sack %', 'Int %']:
+            # Higher values get better ranks (rank 1 = best)
+            
+            defense_rank_expressions.append(pl.col(col).rank(method='min', descending=True).alias(f'{col}_rank'))
+        else:
+            # Lower values get better ranks (rank 1 = best)
+            defense_rank_expressions.append(pl.col(col).rank(method='min', descending=False).alias(f'{col}_rank'))
+    offense_df = dataframes[1]
+    
+    # Convert string columns to float before ranking using reusable function
+    offense_df = convert_string_columns_to_float(offense_df, exclude_columns=["Team", "Season"])
+    
+    offense_rank_expressions = []
+    for col in offense_df.columns:
+        # Skip non-numeric columns and the Team column
+        if col in ["Team", "Season"]:
+            continue
+        if col in ['Sack %', 'Int %']:
+            # Lower values get better ranks (rank 1 = best)
+            offense_rank_expressions.append(pl.col(col).rank(method='min', descending=False).alias(f'{col}_rank'))
+        else:
+            # Higher values get better ranks (rank 1 = best)
+            offense_rank_expressions.append(pl.col(col).rank(method='min', descending=True).alias(f'{col}_rank'))
+            
+    defense_df = defense_df.with_columns(defense_rank_expressions)
+    column_mapping = {col: col.replace(' ', '_').lower() for col in defense_df.columns}
+    defense_df = defense_df.rename(column_mapping)
+    # Extract the last word from team names
+    defense_df = defense_df.with_columns(
+        pl.col('team').str.split(' ').list.last().alias('team')
+    )
+    offense_df = offense_df.with_columns(offense_rank_expressions)
+    column_mapping = {col: col.replace(' ', '_').lower() for col in offense_df.columns}
+    offense_df = offense_df.rename(column_mapping)
+    # Extract the last word from team names
+    offense_df = offense_df.with_columns(
+        pl.col('team').str.split(' ').list.last().alias('team')
+    )
+    return defense_df, offense_df
 

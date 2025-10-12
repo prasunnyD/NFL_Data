@@ -288,6 +288,32 @@ def snap_counts_to_df(season: list[int]) -> pl.DataFrame:
 
     return snap_count_df
 
+def get_player_passing_advanced_stats(category: str, season: list[int]) -> pl.DataFrame:
+    df=nfl.import_ngs_data(category, season)
+    df = pl.from_pandas(df)
+    
+    drop_columns = ['team_abbr', 'player_gsis_id', 'player_first_name', 'player_last_name', 
+        'player_jersey_number', 'player_short_name']
+    
+    df = df.drop(drop_columns)
+
+    exclude_columns = [
+        'season', 'season_type', 'week', 'player_display_name', 'player_position', 
+    ]
+    # Get numeric columns (excluding the specified columns)
+    numeric_columns = [col for col in df.columns if col not in exclude_columns]
+    
+    # Group by player_display_name and calculate mean for numeric columns
+    grouped_df = df.group_by("player_display_name").agg([
+        pl.col(col).mean().alias(f"{col}") for col in numeric_columns
+    ])
+
+    grouped_df = grouped_df.with_columns([
+        pl.col(col).rank(method='min', descending=True).alias(f'{col}_rank') for col in numeric_columns
+    ])
+
+    return grouped_df
+
 
 if __name__ == "__main__":
     import asyncio

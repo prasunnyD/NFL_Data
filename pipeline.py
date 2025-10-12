@@ -129,10 +129,33 @@ def populate_team_advanced_offense_stats():
     adv_stats = adv_stats.join(team_df, on="team_name", how="left")
     database.write_to_db(adv_stats, "nfl_team_offense_advanced_stats", "team_id")
 
+@task
+def populate_player_advanced_stats():
+    passing_df = players.get_player_passing_advanced_stats("passing", [2025])
+    rushing_df = players.get_player_passing_advanced_stats("rushing", [2025])
+    receiving_df = players.get_player_passing_advanced_stats("receiving", [2025])
+    database.write_to_db(passing_df, "nfl_player_passing_advanced_stats", "player_id")
+    database.write_to_db(rushing_df, "nfl_player_rushing_advanced_stats", "player_id")
+    database.write_to_db(receiving_df, "nfl_player_receiving_advanced_stats", "player_id")
+
+@task
+def sharp_defense_stats():
+    df = teams.sharp_defense_stats()
+    database.write_to_db(df, "nfl_sharp_defense_stats", "Team")
+
+@task
+def summer_advanced_stats():
+    defense_df, offense_df = teams.sumer_advanced_stats()
+    database.write_to_db(defense_df, "nfl_sumer_defense_stats", "Team")
+    database.write_to_db(offense_df, "nfl_sumer_offense_stats", "Team")
+
+
+
+
 
 @flow
 def main():
-    populate_player_gamelog()
+    summer_advanced_stats()
     
 
 
