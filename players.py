@@ -314,6 +314,45 @@ def get_player_passing_advanced_stats(category: str, season: list[int]) -> pl.Da
 
     return grouped_df
 
+def get_pbp_passing(season) -> pl.DataFrame:
+    pbp_df = nfl.import_pbp_data([season])
+    pbp_df = pl.from_pandas(pbp_df)
+    pbp_df = pbp_df.filter(pl.col("season") == season)
+    pbp_df = pbp_df.filter(pl.col("play_type") == "pass")
+    pbp_df = pbp_df.filter(pl.col("pass_attempt") == 1)
+    pbp_df = pbp_df.filter(pl.col("sack") == 0)
+    pbp_df = pbp_df.select(
+        "season", "week", "game_id", "defteam", 
+        "passer","receiver", "complete_pass", "pass_length", "air_yards", "yards_after_catch",
+        "pass_location","yards_gained", "interception"
+    )
+    pbp_df = pbp_df.rename({"defteam": "opponent"})
+    
+    pbp_df = pbp_df.with_columns(
+        pl.when(pl.col("complete_pass").eq(0))
+        .then(pl.col("air_yards").fill_null(0))
+        .otherwise(pl.col("air_yards")),
+        
+        pl.when(pl.col("complete_pass").eq(0))
+        .then(pl.col("yards_after_catch").fill_null(0))
+        .otherwise(pl.col("yards_after_catch")),
+        
+        pl.when(pl.col("complete_pass").eq(0))
+        .then(pl.col("receiver").fill_null("throw away"))
+        .otherwise(pl.col("receiver")),
+        
+        pl.when(pl.col("complete_pass").eq(0))
+        .then(pl.col("pass_location").fill_null("throw away"))
+        .otherwise(pl.col("pass_location")),
+        
+        pl.when(pl.col("complete_pass").eq(0))
+        .then(pl.col("pass_length").fill_null("throw away"))
+        .otherwise(pl.col("pass_length"))
+    )
+
+    return pbp_df
+    
+
 
 if __name__ == "__main__":
     import asyncio

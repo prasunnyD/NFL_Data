@@ -127,7 +127,7 @@ def get_game_events(season_year: str) -> pl.DataFrame:
     })
     return event_df
 
-def add_team_defense_advanced_stats(df: pl.DataFrame) -> pl.DataFrame:
+def add_team_defense_advanced_stats(df: pl.DataFrame, csv_file : str) -> pl.DataFrame:
 
         columns_to_rank = ['epa_per_play_allowed', 'success_rate_allowed', 'rush_success_rate_allowed', 'dropback_success_rate_allowed', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended']
         team_mapping = {
@@ -164,7 +164,7 @@ def add_team_defense_advanced_stats(df: pl.DataFrame) -> pl.DataFrame:
             'TEN': 'Titans',
             'WAS': 'Commanders'
         }
-        adv_stats = pl.read_csv("nfl_adv_stats/NFL-2025-week4-defense-stats.csv")
+        adv_stats = pl.read_csv(csv_file)
         adv_stats = adv_stats.with_columns(pl.col("Abbr").map_elements(lambda x: team_mapping.get(x, x)).alias("team_name"))
         adv_stats = adv_stats.drop(["Abbr","Team", ""])
         adv_stats = adv_stats.rename({"EPA/play": "epa_per_play_allowed", "Success Rate (SR)": "success_rate_allowed", "Rush SR": "rush_success_rate_allowed", "Dropback SR": "dropback_success_rate_allowed"})
@@ -188,7 +188,7 @@ def add_team_defense_advanced_stats(df: pl.DataFrame) -> pl.DataFrame:
         return df_with_ranks
     
 
-def add_team_offense_advanced_stats() -> pl.DataFrame:
+def add_team_offense_advanced_stats(csv_file : str) -> pl.DataFrame:
 
         columns_to_rank = ['epa_per_play', 'success_rate', 'rush_success_rate', 'dropback_success_rate', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended']
         team_mapping = {
@@ -225,7 +225,7 @@ def add_team_offense_advanced_stats() -> pl.DataFrame:
             'TEN': 'Titans',
             'WAS': 'Commanders'
         }
-        adv_stats = pl.read_csv("nfl_adv_stats/NFL-2025-week4-offense-stats.csv")
+        adv_stats = pl.read_csv(csv_file)
         adv_stats = adv_stats.with_columns(pl.col("Abbr").map_elements(lambda x: team_mapping.get(x, x)).alias("team_name"))
         adv_stats = adv_stats.drop(["Abbr","Team", ""])
         adv_stats = adv_stats.rename({"EPA/play": "epa_per_play", "Success Rate (SR)": "success_rate", "Rush SR": "rush_success_rate", "Dropback SR": "dropback_success_rate"})

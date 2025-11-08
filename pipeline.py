@@ -1,12 +1,12 @@
-from prefect import flow, task
+from prefect import flow, task, serve
+from duckdb import ConversionException
 import players
 import teams
 import os
 import database
 from dotenv import load_dotenv
 import polars as pl
-import logging
-import duckdb
+from loguru import logger
 
 
 @task
@@ -33,7 +33,7 @@ def populate_player_gamelog():
     
     # Get all players at once
     all_players = list(player_df.select("player_id", "player_name", "position").iter_rows())
-    season = 2024
+    season = 2025
     
     # Process all players with built-in concurrency
     gamelog_df, qb_gamelog_df = players.get_multiple_player_gamelogs_sync(all_players, season=season)
@@ -52,13 +52,13 @@ def populate_player_gamelog():
 
     
     if not gamelog_df.is_empty():
-        database.insert_into_db(gamelog_df, "nfl_player_gamelog_test")
+        database.insert_into_db(gamelog_df, "nfl_player_gamelog")
     if not qb_gamelog_df.is_empty():
         database.insert_into_db(qb_gamelog_df, "nfl_qb_gamelog")
 
 @task
 def populate_player_snap_counts():
-    snap_counts_df = players.snap_counts_to_df([2025, 2024])
+    snap_counts_df = players.snap_counts_to_df([2024, 2025])
     database.write_to_db(snap_counts_df, "nfl_player_snap_counts", "player_id")
 
 @task
@@ -66,7 +66,7 @@ def populate_roster():
     team_dict = teams.get_teams()
     for team in team_dict:
         roster = teams.get_roster(team)
-        database.write_to_db(roster, "nfl_roster", "playerid")
+        database.write_to_db(roster, "nfl_roster", "player_id")
 
 @task
 def populate_game_events():
@@ -112,7 +112,7 @@ def populate_team_stats():
                 columns="stat_name"
             )
             if category == "defensive":
-                pivoted_stats = teams.add_team_defense_advanced_stats(pivoted_stats)
+                pivoted_stats = teams.add_team_defense_advanced_stats(pivoted_stats, "nfl_adv_stats/NFL-2025-week10-defense-stats.csv")
             elif category in ["passing", "rushing", "receiving"]:
                 rank_expressions = []
                 for col in pivoted_stats.columns:
@@ -124,7 +124,7 @@ def populate_team_stats():
 
 @task
 def populate_team_advanced_offense_stats():
-    adv_stats = teams.add_team_offense_advanced_stats()
+    adv_stats = teams.add_team_offense_advanced_stats("nfl_adv_stats/NFL-2025-week10-offense-stats.csv")
     team_df = database.get_from_db("select DISTINCT team_name, team_id from nfl_roster_db")
     adv_stats = adv_stats.join(team_df, on="team_name", how="left")
     database.write_to_db(adv_stats, "nfl_team_offense_advanced_stats", "team_id")
@@ -149,16 +149,41 @@ def summer_advanced_stats():
     database.write_to_db(defense_df, "nfl_sumer_defense_stats", "Team")
     database.write_to_db(offense_df, "nfl_sumer_offense_stats", "Team")
 
+@task
+def populate_passing_heat_map():
+    pbp_df = players.get_pbp_passing(2025)
+    database.write_to_db(pbp_df, "nfl_pbp_qb_data", "game_id")
 
 
 
 
 @flow
-def main():
+def player_data_pipeline(log_prints=True):
+    populate_roster()
+    populate_game_events()
+    populate_player_snap_counts()
+    populate_player_gamelog()
+    populate_passing_heat_map()
+
+@flow
+def team_data_pipeline():
+    populate_team_stats()
+    populate_team_advanced_offense_stats()
+    sharp_defense_stats()
     summer_advanced_stats()
-    
+
 
 
 if __name__ == "__main__":
-    main()
+    player_deploy = player_data_pipeline.to_deployment(
+        name="nfl-player-data-pipeline",
+        cron="0 23 * * 2"
+    )
+    team_deploy = team_data_pipeline.to_deployment(
+        name="nfl-team-data-pipeline",
+        cron="0 23 * * 3"
+    )
+    
+    serve(player_deploy, team_deploy)
+
     
