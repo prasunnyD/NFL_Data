@@ -75,7 +75,7 @@ def populate_game_events():
         database.write_to_game_db(event_df, "nfl_games")
 
 @task
-def populate_team_stats():
+def populate_team_stats(csv_path):
     import duckdb
     team_df = database.get_from_db("select DISTINCT team_name, team_id from nfl_roster_db")
     
@@ -112,7 +112,7 @@ def populate_team_stats():
                 columns="stat_name"
             )
             if category == "defensive":
-                pivoted_stats = teams.add_team_defense_advanced_stats(pivoted_stats, "nfl_adv_stats/NFL-2025-week10-defense-stats.csv")
+                pivoted_stats = teams.add_team_defense_advanced_stats(pivoted_stats, csv_path)
             elif category in ["passing", "rushing", "receiving"]:
                 rank_expressions = []
                 for col in pivoted_stats.columns:
@@ -123,8 +123,8 @@ def populate_team_stats():
             database.write_to_db(pivoted_stats, f"nfl_team_{category}_stats_db", "team_id")
 
 @task
-def populate_team_advanced_offense_stats():
-    adv_stats = teams.add_team_offense_advanced_stats("nfl_adv_stats/NFL-2025-week10-offense-stats.csv")
+def populate_team_advanced_offense_stats(csv_path):
+    adv_stats = teams.add_team_offense_advanced_stats(csv_path)
     team_df = database.get_from_db("select DISTINCT team_name, team_id from nfl_roster_db")
     adv_stats = adv_stats.join(team_df, on="team_name", how="left")
     database.write_to_db(adv_stats, "nfl_team_offense_advanced_stats", "team_id")
@@ -166,9 +166,9 @@ def player_data_pipeline(log_prints=True):
     populate_passing_heat_map()
 
 @flow
-def team_data_pipeline():
-    populate_team_stats()
-    populate_team_advanced_offense_stats()
+def team_data_pipeline(log_prints=True):
+    populate_team_stats("nfl_adv_stats/NFL-2025-week14-defense-stats.csv")
+    populate_team_advanced_offense_stats("nfl_adv_stats/NFL-2025-week14-offense-stats.csv")
     sharp_defense_stats()
     summer_advanced_stats()
 

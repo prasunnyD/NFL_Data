@@ -129,7 +129,7 @@ def get_game_events(season_year: str) -> pl.DataFrame:
 
 def add_team_defense_advanced_stats(df: pl.DataFrame, csv_file : str) -> pl.DataFrame:
 
-        columns_to_rank = ['epa_per_play_allowed', 'success_rate_allowed', 'rush_success_rate_allowed', 'dropback_success_rate_allowed', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended']
+        columns_to_rank = ['epa_per_play_allowed', 'success_rate_allowed', 'rush_success_rate_allowed', 'dropback_success_rate_allowed', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended',"rush_epa_allowed", "dropback_epa_allowed"]
         team_mapping = {
             'ARI': 'Cardinals',
             'ATL': 'Falcons',
@@ -167,7 +167,7 @@ def add_team_defense_advanced_stats(df: pl.DataFrame, csv_file : str) -> pl.Data
         adv_stats = pl.read_csv(csv_file)
         adv_stats = adv_stats.with_columns(pl.col("Abbr").map_elements(lambda x: team_mapping.get(x, x)).alias("team_name"))
         adv_stats = adv_stats.drop(["Abbr","Team", ""])
-        adv_stats = adv_stats.rename({"EPA/play": "epa_per_play_allowed", "Success Rate (SR)": "success_rate_allowed", "Rush SR": "rush_success_rate_allowed", "Dropback SR": "dropback_success_rate_allowed"})
+        adv_stats = adv_stats.rename({"EPA/play": "epa_per_play_allowed", "Success Rate (SR)": "success_rate_allowed","Rush EPA" : "rush_epa_allowed", "Rush SR": "rush_success_rate_allowed", "Dropback EPA": "dropback_epa_allowed", "Dropback SR": "dropback_success_rate_allowed"})
         df = df.join(adv_stats, on="team_name")
         # Create rank columns for the specified columns
         rank_expressions = []
@@ -175,7 +175,7 @@ def add_team_defense_advanced_stats(df: pl.DataFrame, csv_file : str) -> pl.Data
             if col in df.columns:
                 # For defensive stats, lower is better for yardsAllowed and pointsAllowed
                 # Higher is better for sacks, stuffs, and passesDefended
-                if col in ['epa_per_play_allowed', 'success_rate_allowed', 'rush_success_rate_allowed', 'dropback_success_rate_allowed']:
+                if col in ['epa_per_play_allowed', "rush_epa_allowed", "dropback_epa_allowed" ,'success_rate_allowed', 'rush_success_rate_allowed', 'dropback_success_rate_allowed']:
                     # Lower values get better ranks (rank 1 = best)
                     rank_expressions.append(pl.col(col).rank(method='min', descending=False).alias(f'{col}_rank'))
                 else:
@@ -190,7 +190,7 @@ def add_team_defense_advanced_stats(df: pl.DataFrame, csv_file : str) -> pl.Data
 
 def add_team_offense_advanced_stats(csv_file : str) -> pl.DataFrame:
 
-        columns_to_rank = ['epa_per_play', 'success_rate', 'rush_success_rate', 'dropback_success_rate', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended']
+        columns_to_rank = ['epa_per_play', "rush_epa", "dropback_epa", 'success_rate', 'rush_success_rate', 'dropback_success_rate', 'tacklesForLoss', 'sacks', 'stuffs', 'passesDefended']
         team_mapping = {
             'ARI': 'Cardinals',
             'ATL': 'Falcons',
@@ -228,7 +228,7 @@ def add_team_offense_advanced_stats(csv_file : str) -> pl.DataFrame:
         adv_stats = pl.read_csv(csv_file)
         adv_stats = adv_stats.with_columns(pl.col("Abbr").map_elements(lambda x: team_mapping.get(x, x)).alias("team_name"))
         adv_stats = adv_stats.drop(["Abbr","Team", ""])
-        adv_stats = adv_stats.rename({"EPA/play": "epa_per_play", "Success Rate (SR)": "success_rate", "Rush SR": "rush_success_rate", "Dropback SR": "dropback_success_rate"})
+        adv_stats = adv_stats.rename({"EPA/play": "epa_per_play", "Success Rate (SR)": "success_rate", "Rush SR": "rush_success_rate", "Dropback SR": "dropback_success_rate", "Rush EPA": "rush_epa", "Dropback EPA": 'dropback_epa'})
         # Create rank columns for the specified columns
         rank_expressions = []
         for col in columns_to_rank:
