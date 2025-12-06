@@ -1,12 +1,17 @@
-from prefect import flow, task, serve
-from duckdb import ConversionException
+from prefect import flow, task, serve, get_run_logger
+from prefect.schedules import Cron
 import players
 import teams
 import os
 import database
 from dotenv import load_dotenv
 import polars as pl
-from loguru import logger
+import duckdb
+import requests
+
+load_dotenv()
+ODDS_API = os.getenv('ODDS_API')
+MOTHERDUCK_TOKEN = os.getenv('MOTHERDUCK_TOKEN')
 
 
 @task
@@ -154,6 +159,114 @@ def populate_passing_heat_map():
     pbp_df = players.get_pbp_passing(2025)
     database.write_to_db(pbp_df, "nfl_pbp_qb_data", "game_id")
 
+def get_events() -> list[int]:
+
+    events_url = f"https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events?apiKey={ODDS_API}"
+    events = []
+    matches = requests.get(events_url).json()
+    for match in matches:
+        events.append(match["id"])
+    return events
+
+@flow()
+def get_prop_odds() -> None:
+    from collections import defaultdict
+
+    logger = get_run_logger()
+    logger.info("Getting Prop Odds...")
+    markets = [
+        "player_pass_completions",
+        "player_pass_attempts",
+        "player_pass_yds",
+        "player_rush_yds",
+        "player_rush_attempts",
+        "player_reception_yds",
+        "player_receptions",
+        "player_reception_longest",
+    ]
+    events = get_events()
+
+    with duckdb.connect(f"md:nfl_data?motherduck_token={MOTHERDUCK_TOKEN}") as conn:
+        table_exists = conn.execute("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_name = 'nfl_data.nfl_prop_odds'
+            )
+            """).fetchone()[0]
+        for game_id in events:
+            for market in markets:
+                game_url = f"https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events/{game_id}/odds?apiKey={ODDS_API}&regions=us&markets={market}&oddsFormat=american"
+                try:
+                    games = requests.get(game_url).json()
+                except Exception as e:
+                    logger.error(f"Request failed for {game_id}: {e}")
+                    continue
+
+                list_of_players = []
+
+                for bookmaker in games["bookmakers"]:
+                    market_data = bookmaker["markets"][0]
+                    timestamp = market_data["last_update"]
+                    sport_book = bookmaker["title"]
+                    market_key = market_data["key"]
+
+                    # Group outcomes by (player_name, point_line) since same player can have multiple lines
+                    player_lines = defaultdict(dict)
+
+                    for outcome in market_data["outcomes"]:
+                        player_name = outcome["description"]
+                        logger.info(f"Getting data for {player_name}...")
+                        point_line = outcome["point"]
+                        over_under = outcome["name"]  # "Over" or "Under"
+                        price = outcome["price"]
+
+                        # Use (player, line) as key since some books offer multiple lines per player
+                        key = (player_name, point_line)
+                        player_lines[key][over_under] = price
+
+                    # Now create a clean dict for each player/line combo
+                    for (player_name, point_line), odds in player_lines.items():
+                        player_dict = {
+                            "timestamp": timestamp,
+                            "sport_book": sport_book,
+                            "market": market_key,
+                            "player": player_name,
+                            "line": point_line,
+                            "over_odds": odds.get("Over"),
+                            "under_odds": odds.get("Under"),
+                        }
+                        list_of_players.append(player_dict)
+
+                # Convert to DataFrame for easy viewing
+                if not list_of_players:
+                    logger.warning(f"No odds data for game {game_id}, skipping...")
+                    continue
+
+                odds_df = pl.DataFrame(list_of_players)
+
+                if not table_exists:
+                    logger.info("Creating new odds table...")
+                    conn.execute("""
+                        CREATE TABLE nfl_data.nfl_prop_odds AS
+                        SELECT * FROM odds_df
+                    """)
+                    table_exists = True
+                else:
+                    logger.info("Updating existing nfl_prop_odds table...")
+                    # Register the new data as a view
+                    conn.register("new_odds", odds_df)
+
+                    # Insert only new records using LEFT JOIN approach instead of NOT EXISTS
+                    conn.execute("""
+                        INSERT INTO nfl_data.nfl_prop_odds
+                        SELECT n.*
+                        FROM new_odds n
+                    """)
+
+                conn.commit()
+
+
 
 
 
@@ -177,13 +290,16 @@ def team_data_pipeline(log_prints=True):
 if __name__ == "__main__":
     player_deploy = player_data_pipeline.to_deployment(
         name="nfl-player-data-pipeline",
-        cron="0 23 * * 2"
+        schedule=Cron("0 23 * * 3", timezone="America/New_York"),
     )
     team_deploy = team_data_pipeline.to_deployment(
         name="nfl-team-data-pipeline",
-        cron="0 23 * * 3"
+        schedule=Cron("0 23 * * 3", timezone="America/New_York"),
     )
-    
-    serve(player_deploy, team_deploy)
+    odds_deploy = get_prop_odds.to_deployment(
+        name="nfl-odds-pipeline",
+        schedule=Cron("5 10-20 * * 1,3,4,6,0", timezone="America/New_York"),
+    )
+    serve(player_deploy, team_deploy, odds_deploy)
 
     
