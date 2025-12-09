@@ -34,7 +34,7 @@ def populate_player_overall_stats():
 def populate_player_gamelog():
     import nfl_data_py as nfl
 
-    player_df = database.get_from_db("select DISTINCT player_id, player_name, position from nfl_roster_db")
+    player_df = database.get_from_db("select DISTINCT player_id, player_name, position from nfl_roster_db where position in ('WR','QB','RB','TE')")
     
     # Get all players at once
     all_players = list(player_df.select("player_id", "player_name", "position").iter_rows())
@@ -191,7 +191,7 @@ def get_prop_odds() -> None:
             SELECT EXISTS (
                 SELECT 1
                 FROM information_schema.tables
-                WHERE table_name = 'nfl_data.nfl_prop_odds'
+                WHERE table_name = 'nfl_prop_odds'
             )
             """).fetchone()[0]
         for game_id in events:
@@ -248,7 +248,7 @@ def get_prop_odds() -> None:
                 if not table_exists:
                     logger.info("Creating new odds table...")
                     conn.execute("""
-                        CREATE TABLE nfl_data.nfl_prop_odds AS
+                        CREATE TABLE nfl_prop_odds AS
                         SELECT * FROM odds_df
                     """)
                     table_exists = True
@@ -259,7 +259,7 @@ def get_prop_odds() -> None:
 
                     # Insert only new records using LEFT JOIN approach instead of NOT EXISTS
                     conn.execute("""
-                        INSERT INTO nfl_data.nfl_prop_odds
+                        INSERT INTO nfl_prop_odds
                         SELECT n.*
                         FROM new_odds n
                     """)
